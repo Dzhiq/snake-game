@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>高级贪吃蛇</title>
+
+<style>
+body{
+    margin:0;
+    background:linear-gradient(135deg,#0f2027,#203a43,#2c5364);
+    font-family:Arial, sans-serif;
+    color:#fff;
+    display:flex;
+    justify-content:center;
+    align-items:center;
+    height:100vh;
+}
+
+.game-box{
+    text-align:center;
+}
+
+canvas{
+    background:#000;
+    border-radius:12px;
+    box-shadow:0 0 20px rgba(0,0,0,0.6);
+}
+
+h1{margin:8px 0;}
+
+.info{
+    margin:6px 0;
+}
+
+button{
+    padding:10px 20px;
+    border:none;
+    border-radius:8px;
+    background:#4CAF50;
+    color:#fff;
+    font-size:16px;
+    cursor:pointer;
+}
+button:hover{background:#45a049;}
+
+.overlay{
+    position:absolute;
+    inset:0;
+    background:rgba(0,0,0,.7);
+    display:flex;
+    justify-content:center;
+    align-items:center;
+    flex-direction:column;
+}
+.hidden{display:none;}
+
+/* 新增作者信息样式 */
+.author {
+    margin-top: 10px;
+    font-size: 14px;
+    color: #cccccc; /* 浅灰色，与背景对比且不喧宾夺主 */
+}
+
+</style>
+</head>
+
+<body>
+
+<div class="game-box">
+    <h1>🐍 贪吃蛇</h1>
+    <div class="info">得分：<span id="score">0</span> | 最高分：<span id="best">0</span></div>
+    <canvas id="game" width="320" height="320"></canvas>
+    <br/>
+    <!-- 新增作者信息显示 -->
+    <p class="author">Author：dzq</p>
+    <button onclick="startGame()">开始游戏</button>
+</div>
+
+<div id="gameOver" class="overlay hidden">
+    <h2>游戏结束</h2>
+    <p id="finalScore"></p>
+    <button onclick="startGame()">重新开始</button>
+</div>
+
+<audio id="eatSound" src="https://cdn.jsdelivr.net/gh/naptha/tiny-sound@master/eat.mp3"></audio>
+
+<script>
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+const grid = 16;
+
+let snake, food, dx, dy, score, timer;
+
+const scoreEl = document.getElementById("score");
+const bestEl = document.getElementById("best");
+const overBox = document.getElementById("gameOver");
+const finalScore = document.getElementById("finalScore");
+const eatSound = document.getElementById("eatSound");
+
+/* 最高分 */
+let best = localStorage.getItem("snake_best") || 0;
+bestEl.textContent = best;
+
+/* 初始化 */
+function init(){
+    snake=[{x:10,y:10}];
+    dx=1; dy=0;
+    score=0;
+    scoreEl.textContent=0;
+    randomFood();
+}
+
+/* 随机食物 */
+function randomFood(){
+    food={
+        x:Math.floor(Math.random()*20),
+        y:Math.floor(Math.random()*20)
+    };
+}
+
+/* 绘制 */
+function draw(){
+    ctx.fillStyle="#000";
+    ctx.fillRect(0,0,canvas.width,canvas.height);
+
+    /* 食物 */
+    ctx.fillStyle="#ff5252";
+    ctx.fillRect(food.x*grid,food.y*grid,grid-2,grid-2);
+
+    /* 蛇 */
+    ctx.fillStyle="#4CAF50";
+    snake.forEach((p,i)=>{
+        ctx.globalAlpha = 1 - i*0.03;
+        ctx.fillRect(p.x*grid,p.y*grid,grid-2,grid-2);
+    });
+    ctx.globalAlpha = 1;
+}
+
+/* 更新 */
+function update(){
+    const head={x:snake[0].x+dx,y:snake[0].y+dy};
+
+    /* 撞墙或撞自己 */
+    if(
+        head.x<0||head.y<0||
+        head.x>=20||head.y>=20||
+        snake.some(p=>p.x===head.x&&p.y===head.y)
+    ){
+        gameOver();
+        return;
+    }
+
+    snake.unshift(head);
+
+    /* 吃食物 */
+    if(head.x===food.x&&head.y===food.y){
+        score++;
+        scoreEl.textContent=score;
+        eatSound.currentTime=0;
+        eatSound.play();
+        randomFood();
+    }else{
+        snake.pop();
+    }
+}
+
+/* 循环 */
+function loop(){
+    update();
+    draw();
+}
+
+/* 开始 */
+function startGame(){
+    overBox.classList.add("hidden");
+    init();
+    clearInterval(timer);
+    timer=setInterval(loop,120);
+}
+
+/* 结束 */
+function gameOver(){
+    clearInterval(timer);
+    finalScore.textContent="本次得分："+score;
+
+    if(score>best){
+        best=score;
+        localStorage.setItem("snake_best",best);
+        bestEl.textContent=best;
+    }
+
+    overBox.classList.remove("hidden");
+}
+
+/* 键盘控制 */
+document.addEventListener("keydown",e=>{
+    if(e.key==="ArrowUp"&&dy===0){dx=0;dy=-1;}
+    if(e.key==="ArrowDown"&&dy===0){dx=0;dy=1;}
+    if(e.key==="ArrowLeft"&&dx===0){dx=-1;dy=0;}
+    if(e.key==="ArrowRight"&&dx===0){dx=1;dy=0;}
+});
+
+/* 手机滑动控制 */
+let sx,sy;
+canvas.addEventListener("touchstart",e=>{
+    sx=e.touches[0].clientX;
+    sy=e.touches[0].clientY;
+});
+canvas.addEventListener("touchend",e=>{
+    const dxm=e.changedTouches[0].clientX-sx;
+    const dym=e.changedTouches[0].clientY-sy;
+
+    if(Math.abs(dxm)>Math.abs(dym)){
+        if(dxm>0&&dx===0){dx=1;dy=0;}
+        else if(dxm<0&&dx===0){dx=-1;dy=0;}
+    }else{
+        if(dym>0&&dy===0){dx=0;dy=1;}
+        else if(dym<0&&dy===0){dx=0;dy=-1;}
+    }
+});
+</script>
+</body>
+</html>
