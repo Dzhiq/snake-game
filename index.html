@@ -15,12 +15,15 @@ body{
     justify-content:center;
     align-items:center;
     height:100vh;
-    overflow: hidden; /* 防止页面出现滚动条 */
+    overflow: hidden;
 }
 
 .game-box{
     text-align:center;
     position: relative;
+    max-width: 360px;
+    width: 100%;
+    padding: 0 10px;
 }
 
 canvas{
@@ -28,14 +31,15 @@ canvas{
     border-radius:12px;
     box-shadow:0 0 20px rgba(0,0,0,0.6);
     display: block;
-    margin: 0 auto;
-    touch-action: none; /* 阻止浏览器默认的双指缩放等手势 */
+    margin: 10px auto;
+    touch-action: none;
 }
 
 h1{margin:8px 0;}
 
 .info{
     margin:6px 0;
+    font-size: 16px;
 }
 
 button{
@@ -63,14 +67,12 @@ button:hover{background:#45a049;}
 
 .hidden{display:none;}
 
-/* 新增作者信息样式 */
 .author {
     margin-top: 10px;
     font-size: 14px;
     color: #cccccc;
 }
 
-/* 难度选择容器样式 */
 .difficulty-container {
     margin: 10px 0;
 }
@@ -79,12 +81,40 @@ button:hover{background:#45a049;}
     padding: 8px 16px;
     font-size: 14px;
     background-color: #6c757d;
+    margin: 0 4px;
 }
 
 .difficulty-btn.active {
     background-color: #007bff;
 }
 
+.level-info {
+    margin: 6px 0;
+    font-size: 18px;
+    color: #ffeb3b;
+}
+
+.level-goal {
+    margin: 4px 0;
+    font-size: 14px;
+    color: #4fc3f7;
+}
+
+/* ✅ 倒计时样式优化：更大、更醒目 */
+.timer-display {
+    font-size: 28px;
+    font-weight: bold;
+    color: #4CAF50; /* 默认绿色 */
+    margin: 10px 0;
+    text-shadow: 0 0 8px rgba(76, 175, 80, 0.7);
+    transition: color 0.3s ease;
+}
+
+/* 最后5秒变红 */
+.timer-display.warning {
+    color: #ff5252;
+    text-shadow: 0 0 10px rgba(255, 82, 82, 0.8);
+}
 </style>
 </head>
 
@@ -94,8 +124,7 @@ button:hover{background:#45a049;}
     <h1>🐍 贪吃蛇</h1>
     <div class="info">得分：<span id="score">0</span> | 最高分：<span id="best">0</span></div>
     
-    <!-- 难度选择按钮 -->
-    <div class="difficulty-container">
+    <div id="difficultyContainer" class="difficulty-container">
         <button id="easyBtn" class="difficulty-btn active" onclick="setDifficulty('easy')">简单</button>
         <button id="normalBtn" class="difficulty-btn" onclick="setDifficulty('normal')">一般</button>
         <button id="hardBtn" class="difficulty-btn" onclick="setDifficulty('hard')">困难</button>
@@ -103,29 +132,42 @@ button:hover{background:#45a049;}
 
     <canvas id="game" width="320" height="320"></canvas>
     
+    <div id="levelInfo" class="level-info hidden">第 1 关</div>
+    <div id="levelGoal" class="level-goal hidden">目标：吃到30个食物</div>
+    <div id="timerDisplay" class="timer-display hidden">时间: 30s</div>
+    
     <br/>
-    <!-- 新增作者信息显示 -->
-    <p class="author">Author：dzq</p>
-    <button id="startButton" onclick="startGame()">开始游戏</button>
+    <p class="author">Author：一天八杯水</p>
+    
+    <button id="startFreeButton" onclick="startGame()">自由模式</button>
+    <button id="startLevelButton" onclick="startLevelMode()">闯关模式</button>
 </div>
 
 <div id="gameOver" class="overlay hidden">
     <h2>游戏结束</h2>
     <p id="finalScore"></p>
-    <button onclick="restartGame()">再来一次</button>
     <button onclick="backToMenu()">返回菜单</button>
 </div>
 
-<audio id="eatSound" src="https://cdn.jsdelivr.net/gh/naptha/tiny-sound@master/eat.mp3"></audio>
+<div id="levelComplete" class="overlay hidden">
+    <h2 id="levelResultText">恭喜过关!</h2>
+    <p id="nextLevelHint">即将进入下一关...</p>
+    <button id="nextLevelButton" onclick="nextLevel()">下一关</button>
+</div>
 
 <script>
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
 const grid = 16;
 
-let snake, food, dx, dy, score, timer;
+let snake, food, dx, dy, score, gameLoopIntervalId;
 
-// 难度相关变量
+let gameMode = 'menu';
+let currentLevel = 0;
+let timeLeft = 0;
+let timerIntervalId = null;
+let reversedControls = false;
+
 let currentDifficulty = 'normal';
 const difficultySettings = {
     easy: { speed: 180 },
@@ -133,71 +175,124 @@ const difficultySettings = {
     hard: { speed: 70 }
 };
 
-// 难度按钮元素
+const levels = [
+    {}, // 占位符
+    {
+        initialLength: 1,
+        speed: 240,
+        targetLength: 20,
+        timeLimit: null,
+        reverseControls: false,
+        goalText: "目标：吃到20个食物"
+    },
+    {
+        initialLength: 10,
+        speed: 80,
+        targetLength: null,
+        timeLimit: 30,
+        reverseControls: false,
+        goalText: "目标：坚持30秒不死亡！"
+    },
+    {
+        initialLength: 1,
+        speed: 200,
+        targetLength: 6,
+        timeLimit: null,
+        reverseControls: true,
+        goalText: "目标：方向反转！吃到5个食物"
+    }
+];
+
+// UI refs
+const difficultyContainer = document.getElementById('difficultyContainer');
+const levelInfo = document.getElementById('levelInfo');
+const levelGoal = document.getElementById('levelGoal');
+const timerDisplay = document.getElementById('timerDisplay');
+const startFreeButton = document.getElementById('startFreeButton');
+const startLevelButton = document.getElementById('startLevelButton');
+const nextLevelButton = document.getElementById('nextLevelButton');
+const levelCompleteBox = document.getElementById('levelComplete');
+const levelResultText = document.getElementById('levelResultText');
 const easyBtn = document.getElementById('easyBtn');
 const normalBtn = document.getElementById('normalBtn');
 const hardBtn = document.getElementById('hardBtn');
-const startButton = document.getElementById('startButton');
-
 const scoreEl = document.getElementById("score");
 const bestEl = document.getElementById("best");
-const overBox = document.getElementById("gameOver");
+const gameOverBox = document.getElementById("gameOver");
 const finalScore = document.getElementById("finalScore");
-const eatSound = document.getElementById("eatSound");
 
-// --- 滑动控制相关变量 ---
-let touchStartX = 0;
-let touchStartY = 0;
-const minSwipeDistance = 15; // 设置最小滑动距离阈值，单位像素
-
-/* 最高分 */
 let best = localStorage.getItem("snake_best") || 0;
 bestEl.textContent = best;
 
-/* 初始化 */
+function resetAndStartLoop(speed) {
+    clearInterval(gameLoopIntervalId);
+    gameLoopIntervalId = setInterval(loop, speed);
+}
+
 function init(){
-    snake=[{x:10,y:10}];
-    dx=1; dy=0;
-    score=0;
-    scoreEl.textContent=0;
+    if(gameMode === 'level' && currentLevel > 0 && currentLevel < levels.length) {
+        const levelConfig = levels[currentLevel];
+        const length = levelConfig.initialLength;
+        snake = [];
+        for(let i = 0; i < length; i++) {
+            snake.push({x: 10 - i, y: 10});
+        }
+        reversedControls = levelConfig.reverseControls;
+        dx = 1;
+        dy = 0;
+    } else {
+        snake = [{x:10,y:10}];
+        reversedControls = false;
+        dx = 1;
+        dy = 0;
+    }
+
     randomFood();
+    score = 0;
+    scoreEl.textContent = 0;
 }
 
-/* 随机食物 */
 function randomFood(){
-    food={
-        x:Math.floor(Math.random()*20),
-        y:Math.floor(Math.random()*20)
-    };
+    let newFood;
+    let onSnake;
+    do {
+        onSnake = false;
+        newFood = {
+            x: Math.floor(Math.random() * 20),
+            y: Math.floor(Math.random() * 20)
+        };
+        for(const segment of snake) {
+            if(segment.x === newFood.x && segment.y === newFood.y) {
+                onSnake = true;
+                break;
+            }
+        }
+    } while (onSnake);
+    food = newFood;
 }
 
-/* 绘制 */
 function draw(){
-    ctx.fillStyle="#000";
-    ctx.fillRect(0,0,canvas.width,canvas.height);
+    ctx.fillStyle = "#000";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    /* 食物 */
-    ctx.fillStyle="#ff5252";
-    ctx.fillRect(food.x*grid,food.y*grid,grid-2,grid-2);
+    ctx.fillStyle = "#ff5252";
+    ctx.fillRect(food.x * grid, food.y * grid, grid - 2, grid - 2);
 
-    /* 蛇 */
-    ctx.fillStyle="#4CAF50";
-    snake.forEach((p,i)=>{
-        ctx.globalAlpha = 1 - i*0.03;
-        ctx.fillRect(p.x*grid,p.y*grid,grid-2,grid-2);
+    ctx.fillStyle = "#4CAF50";
+    snake.forEach((p, i) => {
+        ctx.globalAlpha = 1 - i * 0.03;
+        ctx.fillRect(p.x * grid, p.y * grid, grid - 2, grid - 2);
     });
     ctx.globalAlpha = 1;
 }
 
-/* 更新 */
 function update(){
-    const head={x:snake[0].x+dx,y:snake[0].y+dy};
+    const head = {x: snake[0].x + dx, y: snake[0].y + dy};
 
-    /* 撞墙或撞自己 */
     if(
-        head.x<0||head.y<0||
-        head.x>=20||head.y>=20||
-        snake.some(p=>p.x===head.x&&p.y===head.y)
+        head.x < 0 || head.y < 0 ||
+        head.x >= 20 || head.y >= 20 ||
+        snake.some(p => p.x === head.x && p.y === head.y)
     ){
         gameOver();
         return;
@@ -205,125 +300,229 @@ function update(){
 
     snake.unshift(head);
 
-    /* 吃食物 */
-    if(head.x===food.x&&head.y===food.y){
+    if(head.x === food.x && head.y === food.y){
         score++;
-        scoreEl.textContent=score;
-        eatSound.currentTime=0;
-        eatSound.play();
+        scoreEl.textContent = score;
         randomFood();
-    }else{
+    } else {
         snake.pop();
+    }
+
+    if(gameMode === 'level') {
+        const levelConfig = levels[currentLevel];
+        if(levelConfig.targetLength && snake.length >= levelConfig.targetLength) {
+            levelComplete();
+            return;
+        }
     }
 }
 
-/* 循环 */
 function loop(){
     update();
     draw();
 }
 
-/* 设置难度 */
+function changeDirection(newDx, newDy) {
+    if ((newDx !== 0 && dx === 0) || (newDy !== 0 && dy === 0)) {
+        if (!(dx !== 0 && newDx !== 0 && dx + newDx === 0) && !(dy !== 0 && newDy !== 0 && dy + newDy === 0)) {
+            dx = newDx;
+            dy = newDy;
+        }
+    }
+}
+
 function setDifficulty(level) {
     currentDifficulty = level;
-    
-    // 更新按钮状态
     easyBtn.classList.toggle('active', level === 'easy');
     normalBtn.classList.toggle('active', level === 'normal');
     hardBtn.classList.toggle('active', level === 'hard');
 }
 
-/* 开始游戏 */
 function startGame(){
-    if (!currentDifficulty) {
-        setDifficulty('normal');
+    gameMode = 'free';
+    levelInfo.classList.add('hidden');
+    levelGoal.classList.add('hidden');
+    timerDisplay.classList.add('hidden');
+    difficultyContainer.classList.remove('hidden');
+    startFreeButton.classList.remove('hidden');
+    startLevelButton.classList.remove('hidden');
+    gameOverBox.classList.add("hidden");
+    levelCompleteBox.classList.add("hidden");
+
+    init();
+    resetAndStartLoop(difficultySettings[currentDifficulty].speed);
+}
+
+function startLevelMode() {
+    gameMode = 'level';
+    currentLevel = 1;
+    difficultyContainer.classList.add('hidden');
+    startFreeButton.classList.add('hidden');
+    startLevelButton.classList.add('hidden');
+    gameOverBox.classList.add("hidden");
+    levelCompleteBox.classList.add("hidden");
+
+    startCurrentLevel();
+}
+
+// ✅ 关键函数：启动当前关卡（含倒计时逻辑）
+function startCurrentLevel() {
+    const levelConfig = levels[currentLevel];
+    levelInfo.textContent = `第 ${currentLevel} 关`;
+    levelGoal.textContent = levelConfig.goalText;
+    
+    levelInfo.classList.remove('hidden');
+    levelGoal.classList.remove('hidden');
+
+    // ✅ 先清除可能残留的倒计时
+    if (timerIntervalId) {
+        clearInterval(timerIntervalId);
+        timerIntervalId = null;
     }
-    init();
-    clearInterval(timer);
-    timer = setInterval(loop, difficultySettings[currentDifficulty].speed);
-    overBox.classList.add("hidden");
-}
 
-/* 重新开始游戏 */
-function restartGame(){
-    init();
-    clearInterval(timer);
-    timer = setInterval(loop, difficultySettings[currentDifficulty].speed);
-    overBox.classList.add("hidden");
-}
-
-/* 返回主菜单 */
-function backToMenu(){
-    clearInterval(timer);
-    overBox.classList.add("hidden");
-    init();
-    score = 0;
-    scoreEl.textContent = score;
-}
-
-/* 结束 */
-function gameOver(){
-    clearInterval(timer);
-    finalScore.textContent="本次得分："+score;
-
-    if(score>best){
-        best=score;
-        localStorage.setItem("snake_best",best);
-        bestEl.textContent=best;
+    if (levelConfig.timeLimit) {
+        timeLeft = levelConfig.timeLimit;
+        updateTimerDisplay();
+        timerDisplay.classList.remove('hidden');
+        
+        // 设置新倒计时
+        timerIntervalId = setInterval(() => {
+            timeLeft--;
+            updateTimerDisplay();
+            if (timeLeft <= 0) {
+                clearInterval(timerIntervalId);
+                timerIntervalId = null;
+                levelComplete(); // 通关
+            }
+        }, 1000);
+    } else {
+        timerDisplay.classList.add('hidden');
+        // 注意：这里不清除 timerIntervalId，因为上面已处理
     }
 
-    overBox.classList.remove("hidden");
+    init(); // init 会调用 resetAndStartLoop，但不会再清倒计时了
+    resetAndStartLoop(levelConfig.speed);
 }
 
-/* 键盘控制 */
-document.addEventListener("keydown",e=>{
-    if(e.key==="ArrowUp"&&dy===0){dx=0;dy=-1;}
-    if(e.key==="ArrowDown"&&dy===0){dx=0;dy=1;}
-    if(e.key==="ArrowLeft"&&dx===0){dx=-1;dy=0;}
-    if(e.key==="ArrowRight"&&dx===0){dx=1;dy=0;}
+// ✅ 新增：统一更新倒计时显示（含颜色变化）
+function updateTimerDisplay() {
+    timerDisplay.textContent = `⏳ 剩余时间: ${timeLeft} 秒`;
+    
+    // 最后5秒变红
+    if(timeLeft <= 5) {
+        timerDisplay.classList.add('warning');
+    } else {
+        timerDisplay.classList.remove('warning');
+    }
+}
+
+function nextLevel() {
+    currentLevel++;
+    if(currentLevel >= levels.length) {
+        levelCompleteBox.classList.add("hidden");
+        gameOver("🎉 恭喜！你已通关全部关卡！");
+        return;
+    }
+    levelCompleteBox.classList.add("hidden");
+    startCurrentLevel();
+}
+
+function levelComplete() {
+    clearInterval(gameLoopIntervalId);
+    clearInterval(timerIntervalId);
+    levelResultText.textContent = "恭喜过关!";
+    levelCompleteBox.classList.remove("hidden");
+}
+
+function gameOver(reason = "撞墙或撞到自己") {
+    clearInterval(gameLoopIntervalId);
+    clearInterval(timerIntervalId);
+    
+    if (gameMode === 'free') {
+        if(score > best){
+            best = score;
+            localStorage.setItem("snake_best", best);
+            bestEl.textContent = best;
+        }
+        finalScore.textContent = "本次得分：" + score;
+    } else {
+        finalScore.textContent = `关卡 ${currentLevel} 失败: ${reason}`;
+    }
+    
+    gameOverBox.classList.remove("hidden");
+}
+
+function backToMenu() {
+    clearInterval(gameLoopIntervalId);
+    clearInterval(timerIntervalId);
+    
+    gameOverBox.classList.add("hidden");
+    levelCompleteBox.classList.add("hidden");
+    
+    difficultyContainer.classList.remove('hidden');
+    startFreeButton.classList.remove('hidden');
+    startLevelButton.classList.remove('hidden');
+    
+    levelInfo.classList.add('hidden');
+    levelGoal.classList.add('hidden');
+    timerDisplay.classList.add('hidden');
+
+    gameMode = 'menu';
+    currentLevel = 0;
+    reversedControls = false;
+}
+
+// 键盘控制
+document.addEventListener("keydown", e => {
+    let newDx = 0, newDy = 0;
+    switch(e.key) {
+        case "ArrowUp": newDx = 0; newDy = -1; break;
+        case "ArrowDown": newDx = 0; newDy = 1; break;
+        case "ArrowLeft": newDx = -1; newDy = 0; break;
+        case "ArrowRight": newDx = 1; newDy = 0; break;
+        default: return;
+    }
+    if(reversedControls) {
+        newDx = -newDx;
+        newDy = -newDy;
+    }
+    changeDirection(newDx, newDy);
 });
 
-// --- 改进的滑动控制 ---
+// 触摸控制
+let touchStartX = 0, touchStartY = 0;
+const minSwipeDistance = 15;
+
 canvas.addEventListener("touchstart", e => {
-    // 防止长按触发系统菜单
     e.preventDefault();
     const touch = e.touches[0];
     touchStartX = touch.clientX;
     touchStartY = touch.clientY;
 }, { passive: false });
 
+canvas.addEventListener("touchmove", e => {
+    e.preventDefault();
+});
+
 canvas.addEventListener("touchend", e => {
     const touch = e.changedTouches[0];
-    const distX = touch.clientX - touchStartX;
-    const distY = touch.clientY - touchStartY;
+    let distX = touch.clientX - touchStartX;
+    let distY = touch.clientY - touchStartY;
 
-    // 检查滑动距离是否足够
-    if (Math.abs(distX) < minSwipeDistance && Math.abs(distY) < minSwipeDistance) {
-        return; // 滑动太短，忽略
-    }
+    if (Math.abs(distX) < minSwipeDistance && Math.abs(distY) < minSwipeDistance) return;
 
-    // 判断是水平滑动还是垂直滑动
+    let newDx = 0, newDy = 0;
     if (Math.abs(distX) > Math.abs(distY)) {
-        // 水平滑动
-        if (distX > 0 && dx === 0) {
-            // 向右滑动，且当前不是向左移动
-            dx = 1; dy = 0;
-        } else if (distX < 0 && dx === 0) {
-            // 向左滑动，且当前不是向右移动
-            dx = -1; dy = 0;
-        }
+        newDx = distX > 0 ? 1 : -1;
     } else {
-        // 垂直滑动
-        if (distY > 0 && dy === 0) {
-            // 向下滑动，且当前不是向上移动
-            dx = 0; dy = 1;
-        } else if (distY < 0 && dy === 0) {
-            // 向上滑动，且当前不是向下移动
-            dx = 0; dy = -1;
-        }
+        newDy = distY > 0 ? 1 : -1;
     }
-    // 注意：这里没有 preventDefault，因为我们只关心 touchend 事件
-    // 防止默认行为已在 touchstart 中处理
+
+    if(reversedControls) {
+        newDx = -newDx;
+        newDy = -newDy;
+    }
+    changeDirection(newDx, newDy);
 });
 
 </script>
