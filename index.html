@@ -151,7 +151,7 @@ button:hover{background:#45a049;}
 
 <div id="levelComplete" class="overlay hidden">
     <h2 id="levelResultText">恭喜过关!</h2>
-    <p id="nextLevelHint">即将进入下一关...</p>
+    <p id="nextLevelHint">你也太棒了叭！</p>
     <button id="nextLevelButton" onclick="nextLevel()">下一关</button>
 </div>
 
@@ -180,14 +180,14 @@ const levels = [
     {
         initialLength: 1,
         speed: 240,
-        targetLength: 20,
+        targetLength: 16,
         timeLimit: null,
         reverseControls: false,
-        goalText: "目标：吃到20个食物"
+        goalText: "目标：吃到15个食物"
     },
     {
         initialLength: 10,
-        speed: 80,
+        speed: 100,
         targetLength: null,
         timeLimit: 30,
         reverseControls: false,
@@ -434,7 +434,7 @@ function levelComplete() {
     levelCompleteBox.classList.remove("hidden");
 }
 
-function gameOver(reason = "撞墙或撞到自己") {
+function gameOver(reason = "坚持30s哦") {
     clearInterval(gameLoopIntervalId);
     clearInterval(timerIntervalId);
     
