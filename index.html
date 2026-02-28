@@ -15,16 +15,20 @@ body{
     justify-content:center;
     align-items:center;
     height:100vh;
+    overflow: hidden; /* 防止页面出现滚动条 */
 }
 
 .game-box{
     text-align:center;
+    position: relative; /* 为摇杆定位做准备 */
 }
 
 canvas{
     background:#000;
     border-radius:12px;
     box-shadow:0 0 20px rgba(0,0,0,0.6);
+    display: block; /* 避免内联元素可能产生的间隙 */
+    margin: 0 auto;
 }
 
 h1{margin:8px 0;}
@@ -41,6 +45,7 @@ button{
     color:#fff;
     font-size:16px;
     cursor:pointer;
+    margin: 5px;
 }
 button:hover{background:#45a049;}
 
@@ -52,7 +57,9 @@ button:hover{background:#45a049;}
     justify-content:center;
     align-items:center;
     flex-direction:column;
+    z-index: 10; /* 确保覆盖层在最上层 */
 }
+
 .hidden{display:none;}
 
 /* 新增作者信息样式 */
@@ -60,6 +67,55 @@ button:hover{background:#45a049;}
     margin-top: 10px;
     font-size: 14px;
     color: #cccccc; /* 浅灰色，与背景对比且不喧宾夺主 */
+}
+
+/* 难度选择容器样式 */
+.difficulty-container {
+    margin: 10px 0;
+}
+
+.difficulty-btn {
+    padding: 8px 16px;
+    font-size: 14px;
+    background-color: #6c757d; /* 默认灰色 */
+}
+
+.difficulty-btn.active {
+    background-color: #007bff; /* 选中时蓝色 */
+}
+
+/* 摇杆容器样式 */
+.joystick-container {
+    position: absolute;
+    bottom: 20px; /* 距离底部的距离 */
+    left: 20px; /* 距离左边的距离 */
+    width: 100px; /* 基座宽度 */
+    height: 100px; /* 基座高度 */
+    pointer-events: none; /* 让容器本身不影响触摸事件 */
+}
+
+.joystick-base {
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    border-radius: 50%; /* 圆形 */
+    background: rgba(255, 255, 255, 0.1); /* 半透明白色 */
+    backdrop-filter: blur(5px); /* 模糊背景 */
+    border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.joystick-handle {
+    position: absolute;
+    top: calc(50% - 20px); /* 高度的一半减去自身一半 */
+    left: calc(50% - 20px); /* 宽度的一半减去自身一半 */
+    width: 40px;
+    height: 40px;
+    border-radius: 50%; /* 圆形 */
+    background: rgba(255, 255, 255, 0.3); /* 半透明灰色 */
+    backdrop-filter: blur(3px);
+    border: 1px solid rgba(255, 255, 255, 0.4);
+    transform: translate(-50%, -50%); /* 居中对齐 */
+    pointer-events: none; /* 让手柄本身不影响触摸事件 */
 }
 
 </style>
@@ -70,17 +126,33 @@ button:hover{background:#45a049;}
 <div class="game-box">
     <h1>🐍 贪吃蛇</h1>
     <div class="info">得分：<span id="score">0</span> | 最高分：<span id="best">0</span></div>
+    
+    <!-- 难度选择按钮 -->
+    <div class="difficulty-container">
+        <button id="easyBtn" class="difficulty-btn active" onclick="setDifficulty('easy')">简单</button>
+        <button id="normalBtn" class="difficulty-btn" onclick="setDifficulty('normal')">一般</button>
+        <button id="hardBtn" class="difficulty-btn" onclick="setDifficulty('hard')">困难</button>
+    </div>
+
     <canvas id="game" width="320" height="320"></canvas>
+    
+    <!-- 虚拟摇杆容器 -->
+    <div id="joystickContainer" class="joystick-container">
+        <div class="joystick-base"></div>
+        <div class="joystick-handle"></div>
+    </div>
+    
     <br/>
     <!-- 新增作者信息显示 -->
     <p class="author">Author：dzq</p>
-    <button onclick="startGame()">开始游戏</button>
+    <button id="startButton" onclick="startGame()">开始游戏</button>
 </div>
 
 <div id="gameOver" class="overlay hidden">
     <h2>游戏结束</h2>
     <p id="finalScore"></p>
-    <button onclick="startGame()">重新开始</button>
+    <button onclick="restartGame()">再来一次</button>
+    <button onclick="backToMenu()">返回菜单</button>
 </div>
 
 <audio id="eatSound" src="https://cdn.jsdelivr.net/gh/naptha/tiny-sound@master/eat.mp3"></audio>
@@ -92,11 +164,36 @@ const grid = 16;
 
 let snake, food, dx, dy, score, timer;
 
+// 难度相关变量
+let currentDifficulty = 'normal'; // 默认难度
+const difficultySettings = {
+    easy: { speed: 180 },    // 简单：较慢，180ms
+    normal: { speed: 120 },  // 一般：中等，120ms
+    hard: { speed: 70 }      // 困难：较快，70ms
+};
+
+// 难度按钮元素
+const easyBtn = document.getElementById('easyBtn');
+const normalBtn = document.getElementById('normalBtn');
+const hardBtn = document.getElementById('hardBtn');
+const startButton = document.getElementById('startButton');
+
 const scoreEl = document.getElementById("score");
 const bestEl = document.getElementById("best");
 const overBox = document.getElementById("gameOver");
 const finalScore = document.getElementById("finalScore");
 const eatSound = document.getElementById("eatSound");
+
+// 摇杆相关元素
+const joystickContainer = document.getElementById('joystickContainer');
+const joystickBase = joystickContainer.querySelector('.joystick-base');
+const joystickHandle = joystickContainer.querySelector('.joystick-handle');
+
+// 摇杆状态变量
+let isJoystickActive = false;
+let joystickBaseRect;
+let baseCenterX, baseCenterY;
+let maxDistance; // 摇杆活动范围的最大距离
 
 /* 最高分 */
 let best = localStorage.getItem("snake_best") || 0;
@@ -171,12 +268,44 @@ function loop(){
     draw();
 }
 
-/* 开始 */
+/* 设置难度 */
+function setDifficulty(level) {
+    currentDifficulty = level;
+    
+    // 更新按钮状态
+    easyBtn.classList.toggle('active', level === 'easy');
+    normalBtn.classList.toggle('active', level === 'normal');
+    hardBtn.classList.toggle('active', level === 'hard');
+}
+
+/* 开始游戏 (从主菜单点击) */
 function startGame(){
-    overBox.classList.add("hidden");
+    if (!currentDifficulty) {
+        setDifficulty('normal');
+    }
     init();
     clearInterval(timer);
-    timer=setInterval(loop,120);
+    timer = setInterval(loop, difficultySettings[currentDifficulty].speed);
+    overBox.classList.add("hidden");
+    // 初始化摇杆尺寸
+    initJoystick();
+}
+
+/* 重新开始游戏 (使用当前难度) */
+function restartGame(){
+    init();
+    clearInterval(timer);
+    timer = setInterval(loop, difficultySettings[currentDifficulty].speed);
+    overBox.classList.add("hidden");
+}
+
+/* 返回主菜单 */
+function backToMenu(){
+    clearInterval(timer);
+    overBox.classList.add("hidden");
+    init();
+    score = 0;
+    scoreEl.textContent = score;
 }
 
 /* 结束 */
@@ -201,24 +330,113 @@ document.addEventListener("keydown",e=>{
     if(e.key==="ArrowRight"&&dx===0){dx=1;dy=0;}
 });
 
-/* 手机滑动控制 */
-let sx,sy;
-canvas.addEventListener("touchstart",e=>{
-    sx=e.touches[0].clientX;
-    sy=e.touches[0].clientY;
-});
-canvas.addEventListener("touchend",e=>{
-    const dxm=e.changedTouches[0].clientX-sx;
-    const dym=e.changedTouches[0].clientY-sy;
+// --- 虚拟摇杆控制 ---
+function initJoystick() {
+    // 获取摇杆基座的尺寸和位置
+    joystickBaseRect = joystickBase.getBoundingClientRect();
+    baseCenterX = joystickBaseRect.left + joystickBaseRect.width / 2;
+    baseCenterY = joystickBaseRect.top + joystickBaseRect.height / 2;
+    maxDistance = joystickBaseRect.width / 2; // 最大活动半径
+}
 
-    if(Math.abs(dxm)>Math.abs(dym)){
-        if(dxm>0&&dx===0){dx=1;dy=0;}
-        else if(dxm<0&&dx===0){dx=-1;dy=0;}
-    }else{
-        if(dym>0&&dy===0){dx=0;dy=1;}
-        else if(dym<0&&dy===0){dx=0;dy=-1;}
+function handleTouchStart(e) {
+    if (e.touches.length > 0) {
+        const touch = e.touches[0];
+        const touchX = touch.clientX;
+        const touchY = touch.clientY;
+
+        // 检查触摸点是否在摇杆基座内
+        if (
+            touchX >= joystickBaseRect.left &&
+            touchX <= joystickBaseRect.right &&
+            touchY >= joystickBaseRect.top &&
+            touchY <= joystickBaseRect.bottom
+        ) {
+            isJoystickActive = true;
+            moveJoystick(touchX, touchY);
+        }
     }
-});
+}
+
+function handleTouchMove(e) {
+    if (isJoystickActive && e.touches.length > 0) {
+        e.preventDefault(); // 阻止页面滚动
+        const touch = e.touches[0];
+        moveJoystick(touch.clientX, touch.clientY);
+    }
+}
+
+function handleTouchEnd(e) {
+    if (isJoystickActive) {
+        isJoystickActive = false;
+        // 手指抬起后，将手柄归位
+        joystickHandle.style.transform = `translate(-50%, -50%)`;
+        joystickHandle.style.background = 'rgba(255, 255, 255, 0.3)';
+    }
+}
+
+function moveJoystick(x, y) {
+    const deltaX = x - baseCenterX;
+    const deltaY = y - baseCenterY;
+    const distance = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
+    const angleInRadians = Math.atan2(deltaY, deltaX);
+    const angleInDegrees = angleInRadians * (180 / Math.PI);
+
+    let clampedDeltaX = deltaX;
+    let clampedDeltaY = deltaY;
+
+    // 限制手柄在基座范围内移动
+    if (distance > maxDistance) {
+        clampedDeltaX = (deltaX / distance) * maxDistance;
+        clampedDeltaY = (deltaY / distance) * maxDistance;
+    }
+
+    // 更新手柄位置
+    joystickHandle.style.transform = `translate(calc(-50% + ${clampedDeltaX}px), calc(-50% + ${clampedDeltaY}px))`;
+
+    // 根据角度判断方向 (基于笛卡尔坐标系)
+    // 上: -90° ~ -45°, 下: 90° ~ 135° 或 -90° ~ -135°, 左: 135° ~ 180° 或 -180° ~ -135°, 右: -45° ~ 45°
+    // 简化处理，使用象限判断
+    let newDx = 0;
+    let newDy = 0;
+
+    if (angleInDegrees >= -45 && angleInDegrees <= 45) {
+        // 右
+        newDx = 1;
+        newDy = 0;
+    } else if (angleInDegrees > 45 && angleInDegrees < 135) {
+        // 下
+        newDx = 0;
+        newDy = 1;
+    } else if (angleInDegrees >= 135 || angleInDegrees <= -135) {
+        // 左
+        newDx = -1;
+        newDy = 0;
+    } else {
+        // 上
+        newDx = 0;
+        newDy = -1;
+    }
+
+    // 只有当新方向与当前运动方向不相反时才更新
+    if ((newDx !== 0 && dx === 0) || (newDy !== 0 && dy === 0)) {
+        if (!(newDx === -dx && newDy === -dy)) { // 不允许反向
+             dx = newDx;
+             dy = newDy;
+        }
+    }
+}
+
+// 添加触摸事件监听器
+canvas.addEventListener("touchstart", handleTouchStart, { passive: false }); // passive: false 允许 preventDefault
+canvas.addEventListener("touchmove", handleTouchMove, { passive: false });
+canvas.addEventListener("touchend", handleTouchEnd);
+
+// 页面加载后初始化摇杆
+window.addEventListener('load', initJoystick);
+window.addEventListener('resize', initJoystick); // 窗口大小改变时重新计算尺寸
+
+
 </script>
 </body>
 </html>
